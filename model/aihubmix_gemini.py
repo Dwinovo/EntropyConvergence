@@ -3,12 +3,11 @@ AIHubMix (推理时代) 问题模型实现，通过 OpenAI 兼容的 /v1/chat/co
 高内聚：封装 API 细节，仅暴露 ModelInterface 能力。
 低耦合：通过依赖注入与对话管理协作。
 
-参考文档：见 https://docs.aihubmix.com/cn （OpenAI 兼容，替换 base_url 与 key）
+参考文档：见 https://docs.aihubmix.com/cn/api/Aihubmix-Integration （OpenAI 兼容，设置 base_url 与 api_key）
 """
 import os
-import json
 from typing import Optional
-import requests
+from openai import OpenAI
 from .model_interface import ModelInterface
 
 
@@ -19,62 +18,48 @@ class AIHubMixQuestionModel(ModelInterface):
         """初始化 API 客户端配置。
 
         Args:
-            base_url: AIHubMix 基础地址，示例：https://aihubmix.com 或 https://api.aihubmix.com
+            base_url: AIHubMix 基础地址，应包含 /v1（示例：https://aihubmix.com/v1 或 https://api.aihubmix.com/v1）
             api_key: AIHubMix API Key，形如 sk-***
             model_name: 具体模型名称（例如 Gemini 系列）。必须显式提供，避免臆测。
             system_prompt: 系统提示词，可选
         """
-        self.base_url = (base_url or os.getenv("AIHUBMIX_BASE_URL") or "https://aihubmix.com").rstrip("/")
+        self.base_url = (base_url or os.getenv("AIHUBMIX_BASE_URL") or "https://aihubmix.com/v1").rstrip("/")
         self.api_key = api_key or os.getenv("AIHUBMIX_API_KEY")
         self.model_name = model_name or os.getenv("AIHUBMIX_MODEL")
         self.system_prompt = system_prompt or (
             "You are a skilled question generator. Given the topic and prior Q&A context, ask ONE concise, insightful question that advances the discussion. Output only the question."
         )
         self._is_ready = False
+        self.client: Optional[OpenAI] = None
 
     def load_model(self) -> None:
-        """校验必要配置，AI 接口无需本地加载大模型。"""
+        """校验必要配置并初始化 OpenAI 客户端（AIHubMix 转发）。"""
         if not self.api_key:
             raise RuntimeError("缺少 AIHubMix API Key，请设置环境变量 AIHUBMIX_API_KEY。")
         if not self.model_name:
             raise RuntimeError("缺少模型名称，请设置环境变量 AIHUBMIX_MODEL（例如 Gemini 模型标识）。")
-        # 进行一次轻量级健康检查（可选）
+        # 初始化 OpenAI 客户端（兼容 AIHubMix）
+        self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
         self._is_ready = True
 
     def generate_response(self, prompt: str, max_length: Optional[int] = 256) -> str:
         """调用 AIHubMix 的 Chat Completions 生成问题。"""
-        if not self.is_loaded():
+        if not self.is_loaded() or self.client is None:
             raise RuntimeError("问题模型未就绪，请先调用 load_model()。")
 
-        url = f"{self.base_url}/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "model": self.model_name,
-            "messages": [
+        resp = self.client.chat.completions.create(
+            model=self.model_name,
+            messages=[
                 {"role": "system", "content": self.system_prompt},
                 {"role": "user", "content": prompt},
             ],
-            "temperature": 0.7,
-            "stream": False,
-            "max_tokens": max_length or 256,
-        }
+            stream=False,
+        )
         try:
-            resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=60)
-        except Exception as req_err:
-            raise RuntimeError(f"请求 AIHubMix 失败: {req_err}") from req_err
-
-        if resp.status_code != 200:
-            raise RuntimeError(f"AIHubMix 返回错误状态码 {resp.status_code}: {resp.text}")
-
-        try:
-            data = resp.json()
-            # OpenAI 兼容返回格式：choices[0].message.content
-            content = data["choices"][0]["message"]["content"].strip()
+            
+            content = (resp.choices[0].message.content)
         except Exception as parse_err:
-            raise RuntimeError(f"解析 AIHubMix 响应失败: {parse_err}; 原始: {resp.text}") from parse_err
+            raise RuntimeError(f"解析 AIHubMix(OpenAI SDK) 响应失败: {parse_err}") from parse_err
 
         return content
 
@@ -84,3 +69,4 @@ class AIHubMixQuestionModel(ModelInterface):
     def unload_model(self) -> None:
         # 无持久资源需要释放，但提供一致接口
         self._is_ready = False
+        self.client = None

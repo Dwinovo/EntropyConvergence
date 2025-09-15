@@ -9,8 +9,8 @@ from datetime import datetime
 from model.aihubmix_gemini import AIHubMixQuestionModel
 from model.qwen_model import QwenAnswerModel
 from conversation_manager import ConversationManager
-
-
+from dotenv import load_dotenv
+load_dotenv()
 def main():
     """运行对话系统的主函数。"""
     
@@ -38,7 +38,7 @@ def main():
         conversation_manager = ConversationManager(question_model, answer_model)
 
         # 读取主题文件
-        topic_file = "question/ai.txt"
+        topic_file = "topic/ai.txt"
         if not os.path.exists(topic_file):
             print(f"错误：找不到主题文件: {topic_file}")
             return
