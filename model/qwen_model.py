@@ -39,7 +39,8 @@ class QwenAnswerModel(ModelInterface):
             dtype=torch.float16,  # 使用半精度浮点数以节省内存
             device_map="cuda"
         )
-        
+        self.model.eval()
+        torch.manual_seed(42)
         print("Qwen2-7B模型加载成功！")
     
     def generate_response(self, prompt: str, max_length: Optional[int] = 512) -> str:

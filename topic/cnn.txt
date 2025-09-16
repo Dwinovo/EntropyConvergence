@@ -1,0 +1,1 @@
+What core operation (namely, "convolution") does a Convolutional Neural Network (CNN) introduce to cleverly solve the aforementioned problems of "parameter explosion" and the loss of spatial structure? How does this operation mimic the human visual system by first perceiving local regions, rather than processing the entire image all at once?

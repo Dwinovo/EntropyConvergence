@@ -39,7 +39,8 @@ class LlamaQuestionModel(ModelInterface):
             dtype=torch.float16,  # 使用半精度浮点数以节省内存
             device_map="cuda"
         )
-        
+        self.model.eval()
+        torch.manual_seed(42)
         print("Llama3-8B模型加载成功！")
     
     def generate_response(self, prompt: str, max_length: Optional[int] = 512) -> str:
@@ -78,7 +79,6 @@ Please output only the question and nothing fucking else or i will kill you
             outputs = self.model.generate(
                 **inputs,
                 max_new_tokens=max_length,  # 最大新生成token数
-                temperature=0.7,  # 控制生成的随机性
                 pad_token_id=self.tokenizer.eos_token_id,  # 填充token ID
                 eos_token_id=self.tokenizer.eos_token_id  # 结束token ID
             )

@@ -1,10 +1,3 @@
-"""
-AIHubMix (推理时代) 问题模型实现，通过 OpenAI 兼容的 /v1/chat/completions 接口调用（用于 Gemini 等）。
-高内聚：封装 API 细节，仅暴露 ModelInterface 能力。
-低耦合：通过依赖注入与对话管理协作。
-
-参考文档：见 https://docs.aihubmix.com/cn/api/Aihubmix-Integration （OpenAI 兼容，设置 base_url 与 api_key）
-"""
 import os
 from typing import Optional
 from openai import OpenAI
@@ -27,7 +20,7 @@ class AIHubMixQuestionModel(ModelInterface):
         self.api_key = api_key or os.getenv("AIHUBMIX_API_KEY")
         self.model_name = model_name or os.getenv("AIHUBMIX_MODEL")
         self.system_prompt = system_prompt or (
-            "You are a skilled question generator. Given the topic and prior Q&A context, ask ONE concise, insightful question that advances the discussion. Output only the question."
+            "You are a skilled questioner. Based on the given topic and the context of the Q&A, ask a concise, insightful, and in-depth question that revolves around the topic and context to push the discussion forward. Note: Only output the question itself, and it must be centered on the topic."
         )
         self._is_ready = False
         self.client: Optional[OpenAI] = None
