@@ -1,0 +1,10 @@
+topic,mean_entropy_bits,variance_entropy_bits2
+ai,0.608317,0.050137
+algorithms,0.568283,0.023913
+art,0.648992,0.058637
+cnn,0.617160,0.043991
+cybersecurity,0.566135,0.016891
+economics,0.585093,0.041296
+mathematics,0.596045,0.006935
+nlp_transformers,0.605131,0.008851
+philosophy,0.593029,0.015877

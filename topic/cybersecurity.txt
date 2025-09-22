@@ -1,0 +1,2 @@
+Cybersecurity defends information systems. Discuss threat modeling, cryptographic primitives, secure protocols, zero trust, and how AI changes both attack surfaces (phishing, fuzzing) and defenses (anomaly detection).
+

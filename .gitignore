@@ -1,5 +1,3 @@
 # Ignore project logs
-log/
-img/
 .ipynb_checkpoints/
 __pycache__/

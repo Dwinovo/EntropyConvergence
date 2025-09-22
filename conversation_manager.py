@@ -8,13 +8,16 @@ import os
 import math
 from datetime import datetime
 from typing import List, Dict, Optional
-from model.model_interface import ModelInterface
+
+from model.aihubmix_gemini import RemoteModel
+from model.local_model import LocalModel
+# 移除接口依赖，直接使用鸭子类型
 
 
 class ConversationRound:
     """表示单轮对话的数据类。"""
     
-    def __init__(self, round_number: int, question: str = "", answer: str = "", context_entropy_bits: float = None, perplexity: float = None):
+    def __init__(self, round_number: int, question: str = "", answer: str = "", conditional_entropy_bits_per_token: float = None, perplexity: float = None):
         """
         初始化对话轮次。
         
@@ -26,7 +29,7 @@ class ConversationRound:
         self.round_number = round_number  # 轮次编号
         self.question = question  # 问题内容
         self.answer = answer  # 答案内容
-        self.context_entropy_bits = context_entropy_bits  # 回答前的瞬时熵（比特）
+        self.conditional_entropy_bits_per_token = conditional_entropy_bits_per_token  # 本轮答案逐token条件熵的平均值（bits/token）
         self.perplexity = perplexity  # 困惑度（PPL） = 2^H
     
     def __str__(self) -> str:
@@ -39,7 +42,7 @@ class ConversationRound:
             "round_number": self.round_number,
             "question": self.question,
             "answer": self.answer,
-            "context_entropy_bits": self.context_entropy_bits,
+            "conditional_entropy_bits_per_token": self.conditional_entropy_bits_per_token,
             "perplexity": self.perplexity
         }
     
@@ -48,7 +51,7 @@ class ConversationRound:
 class ConversationManager:
     """管理问答模型之间的对话流程。"""
     
-    def __init__(self, question_model: ModelInterface, answer_model: ModelInterface):
+    def __init__(self, question_model:RemoteModel, answer_model:LocalModel):
         """
         初始化对话管理器。
         
@@ -60,6 +63,7 @@ class ConversationManager:
         self.answer_model = answer_model  # 答案生成模型
         self.conversation_history: List[ConversationRound] = []  # 对话历史记录
         self.topic = ""  # 主题
+        self.average_conditional_entropy_bits_per_token: Optional[float] = None  # 本次对话的平均条件熵（bits/token）
     
     def set_topic(self, topic: str) -> None:
         """
@@ -92,36 +96,38 @@ class ConversationManager:
             print(f"\n--- 第 {round_num} 轮 ---")
             # 生成问题
             if round_num == 1:
-                current_question = self.question_model.generate_response(topic)
+                current_question= self.question_model.generate_response(topic)
             else:
                 context_for_next_question = self._build_context_for_next_round(round_num - 1)
-                #print(f"context_for_next_question: {context_for_next_question}")
-                current_question = self.question_model.generate_response(context_for_next_question)
-
-            # 回答前计算瞬时熵
-            context_entropy_bits = None
-            if hasattr(self.answer_model, "compute_entropy_for_question"):
-                try:
-                    context_entropy_bits = self.answer_model.compute_entropy_for_question(current_question)
-                except Exception:
-                    context_entropy_bits = None
-
-            # 基于熵计算困惑度 PPL = 2^H（若熵不可用则为None）
-            perplexity = None
-            if context_entropy_bits is not None and math.isfinite(context_entropy_bits):
-                try:
-                    perplexity = float(2 ** context_entropy_bits)
-                except Exception:
-                    perplexity = None
-
-            # 生成答案
-            answer = self.answer_model.generate_response(current_question)
-            round_obj = ConversationRound(round_num, current_question, answer, context_entropy_bits, perplexity)
+                current_question= self.question_model.generate_response(context_for_next_question)
+            
+            print(f"问题: {current_question}")
+            
+            # 生成答案并计算条件熵
+            current_answer, conditional_entropy = self.answer_model.generate_response(current_question)
+            perplexity = 2 ** conditional_entropy  # 困惑度 = 2^H
+            
+            print(f"答案: {current_answer}")
+            print(f"条件熵: {conditional_entropy:.4f} bits/token")
+            print(f"困惑度: {perplexity:.4f}")
+            
+            # 创建对话轮次对象
+            round_obj = ConversationRound(
+                round_number=round_num,
+                question=current_question,
+                answer=current_answer,
+                conditional_entropy_bits_per_token=conditional_entropy,
+                perplexity=perplexity
+            )
+            
+            # 添加到对话历史
             self.conversation_history.append(round_obj)
 
-            entropy_str = f"{context_entropy_bits:.4f} bits" if (context_entropy_bits is not None and math.isfinite(context_entropy_bits)) else "NA"
-            ppl_str = f"{perplexity:.4f}" if (perplexity is not None and math.isfinite(perplexity)) else "NA"
-            print(f"问题: {current_question}\n答案: {answer}\n熵: {entropy_str}\nPPL: {ppl_str}")
+        # 计算整个对话的平均条件熵
+        if self.conversation_history:
+            total_entropy = sum(round_obj.conditional_entropy_bits_per_token for round_obj in self.conversation_history)
+            self.average_conditional_entropy_bits_per_token = total_entropy / len(self.conversation_history)
+            print(f"\n整个对话的平均条件熵: {self.average_conditional_entropy_bits_per_token:.4f} bits/token")
 
         return self.conversation_history
 
@@ -158,73 +164,19 @@ class ConversationManager:
         conversation_data = {
             "metadata": {
                 "timestamp": datetime.now().isoformat(),
-                "total_rounds": len(self.conversation_history)
+                "total_rounds": len(self.conversation_history),
+                "average_conditional_entropy_bits_per_token": self.average_conditional_entropy_bits_per_token
             },
             "topic": self.topic,
             "conversation_rounds": [round_obj.to_dict() for round_obj in self.conversation_history]
         }
         
+        # 确保日志目录存在
+        os.makedirs("log", exist_ok=True)
         with open(f"log/{filename}", 'w', encoding='utf-8') as f:
             json.dump(conversation_data, f, ensure_ascii=False, indent=2)
         print(f"对话已保存到JSON文件: {filename}")
 
-
-    def save_metrics_plot(self, image_path: str) -> None:
-        """
-        将熵(左y轴)与PPL(右y轴)绘制到同一张图。
-        """
-        try:
-            import matplotlib
-            matplotlib.use('Agg')
-            import matplotlib.pyplot as plt
-        except Exception as import_err:
-            print(f"无法绘制综合指标图（matplotlib不可用）: {import_err}")
-            return
-
-        if not self.conversation_history:
-            print("无对话历史，跳过综合指标图绘制。")
-            return
-
-        x_rounds = [r.round_number for r in self.conversation_history]
-        y_entropy = [
-            (r.context_entropy_bits if (r.context_entropy_bits is not None and math.isfinite(r.context_entropy_bits)) else float('nan'))
-            for r in self.conversation_history
-        ]
-        y_ppl = [
-            (r.perplexity if (r.perplexity is not None and math.isfinite(r.perplexity)) else float('nan'))
-            for r in self.conversation_history
-        ]
-
-        out_dir = os.path.dirname(image_path)
-        if out_dir and not os.path.exists(out_dir):
-            os.makedirs(out_dir, exist_ok=True)
-
-        fig, ax1 = plt.subplots(figsize=(9, 5))
-
-        color_entropy = '#1f77b4'
-        color_ppl = '#d62728'
-
-        l1 = ax1.plot(x_rounds, y_entropy, marker='o', linestyle='-', color=color_entropy, label='Entropy (bits)')
-        ax1.set_xlabel('rounds')
-        ax1.set_ylabel('entropy (bits)', color=color_entropy)
-        ax1.tick_params(axis='y', labelcolor=color_entropy)
-        ax1.grid(True, linestyle='--', alpha=0.3)
-        ax1.set_xticks(x_rounds)
-
-        ax2 = ax1.twinx()
-        l2 = ax2.plot(x_rounds, y_ppl, marker='s', linestyle='--', color=color_ppl, label='Perplexity (PPL)')
-        ax2.set_ylabel('perplexity (PPL)', color=color_ppl)
-        ax2.tick_params(axis='y', labelcolor=color_ppl)
-
-        lines = l1 + l2
-        labels = [line.get_label() for line in lines]
-        ax1.legend(lines, labels, loc='upper right')
-
-        plt.title('Entropy and Perplexity over Rounds')
-        fig.tight_layout()
-        fig.savefig(image_path, dpi=150)
-        plt.close(fig)
-        print(f"综合指标图已保存到: {image_path}")
     
     def get_latest_round(self) -> Optional[ConversationRound]:
         """

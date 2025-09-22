@@ -1,0 +1,2 @@
+Economics analyzes scarcity, incentives, and equilibria. Contrast micro foundations (preferences, game theory) with macro dynamics (growth, cycles), and discuss identification, causal inference, and the role of data and models in policy.
+

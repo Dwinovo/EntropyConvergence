@@ -1,0 +1,2 @@
+Mathematics investigates structure, quantity, and change through proof. Discuss how abstraction (algebra, topology, analysis, probability) enables generalization, and reflect on the roles of rigor, computation, and visualization in modern practice.
+

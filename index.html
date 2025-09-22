@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Entropy Dashboard</title>
+  <style>
+    /* 基础布局：左侧表格 + 右侧控制与图表 */
+    :root {
+      --bg: #0b0d12;
+      --panel: #12141a;
+      --text: #e8ecf1;
+      --muted: #9aa5b1;
+      --accent: #7aa2f7;
+      --grid: #2a2f3a;
+    }
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+    }
+    .container {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr;
+      gap: 16px;
+      padding: 16px;
+      height: 100%;
+      box-sizing: border-box;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid #1b1f2a;
+      border-radius: 10px;
+      box-shadow: 0 6px 24px rgba(0,0,0,0.35);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .card h2 {
+      margin: 0;
+      padding: 12px 16px;
+      font-size: 16px;
+      border-bottom: 1px solid #1b1f2a;
+      color: var(--muted);
+      letter-spacing: .3px;
+    }
+    .table-wrap { overflow: auto; flex: 1; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    thead th {
+      position: sticky; top: 0;
+      background: #161923;
+      z-index: 1;
+    }
+    th, td { padding: 8px 10px; border-bottom: 1px solid #1b1f2a; text-align: right; }
+    th:first-child, td:first-child { text-align: left; position: sticky; left: 0; background: #151824; }
+    tbody tr:hover { background: #141826; }
+
+    .right {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      gap: 16px;
+    }
+    .topics {
+      display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 16px;
+    }
+    .topic-btn {
+      padding: 6px 10px; font-size: 12px; border-radius: 8px;
+      border: 1px solid #263147; background: #0f1320; color: var(--text);
+      cursor: pointer; transition: all .2s ease;
+    }
+    .topic-btn:hover { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(122,162,247,.15) inset; }
+    .topic-btn.active { background: #18203a; border-color: var(--accent); }
+
+    .chart-card { position: relative; }
+    .chart-header { display:flex; align-items:center; justify-content: space-between; padding: 10px 16px; border-bottom: 1px solid #1b1f2a;}
+    .chart-title { font-size: 14px; color: var(--muted); }
+    .chart-meta { font-size: 12px; color: var(--muted); opacity:.8; }
+    .chart-wrap { position: relative; flex:1; padding: 12px; }
+    svg { width: 100%; height: 100%; min-height: 320px; display:block; }
+    .axis path, .axis line { stroke: var(--grid); }
+    .axis text { fill: var(--muted); font-size: 11px; }
+    .grid line { stroke: var(--grid); stroke-dasharray: 3 3; }
+    .line {
+      fill: none; stroke-width: 2.25;
+      opacity: 0; transition: opacity .35s ease;
+    }
+    .line.visible { opacity: 1; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <section class="card">
+      <h2>Per-topic average entropy per round (1..30)</h2>
+      <div class="table-wrap">
+        <table id="data-table"></table>
+      </div>
+    </section>
+
+    <section class="right">
+      <div class="card">
+        <h2>Topics</h2>
+        <div class="topics" id="topic-buttons"></div>
+      </div>
+
+      <div class="card chart-card">
+        <div class="chart-header">
+          <div class="chart-title" id="chart-title">Average entropy per round (mean of 3 runs)</div>
+          <div class="chart-meta" id="chart-meta">Selected: 0 topics</div>
+        </div>
+        <div class="chart-wrap">
+          <svg id="chart" viewBox="0 0 800 420" preserveAspectRatio="xMidYMid meet"></svg>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    // 解析CSV为数组对象
+    function parseCSV(text) {
+      // 简单CSV解析：按行拆分，再按逗号拆分；不处理引号包裹的复杂情况
+      const lines = text.trim().split(/\r?\n/);
+      const header = lines[0].split(',');
+      const rows = lines.slice(1).filter(Boolean).map(line => line.split(','));
+      return { header, rows };
+    }
+
+    // 将数据渲染为表格
+    function renderTable(container, header, rows) {
+      const thead = `<thead><tr>${header.map(h => `<th>${h}</th>`).join('')}</tr></thead>`;
+      const tbody = `<tbody>${rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody>`;
+      container.innerHTML = thead + tbody;
+    }
+
+    // 生成主题按钮
+    function renderTopicButtons(container, topics, onSelect, defaultTopic) {
+      container.innerHTML = '';
+      topics.forEach(t => {
+        const btn = document.createElement('button');
+        btn.className = 'topic-btn' + (t === defaultTopic ? ' active' : '');
+        btn.textContent = t;
+        btn.addEventListener('click', () => {
+          // 切换按钮激活态
+          container.querySelectorAll('.topic-btn').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          onSelect(t);
+        });
+        container.appendChild(btn);
+      });
+    }
+
+    // 计算线性比例尺（y= a*x + b）
+    function linearScale(domainMin, domainMax, rangeMin, rangeMax) {
+      const d = domainMax - domainMin || 1;
+      const r = rangeMax - rangeMin;
+      const a = r / d;
+      const b = rangeMin - a * domainMin;
+      return v => a * v + b;
+    }
+
+    // 绘制坐标轴与网格
+    function drawAxes(svg, width, height, margin, xTicks, yMin, yMax) {
+      const xScale = linearScale(1, xTicks, margin.left, width - margin.right);
+      const yScale = linearScale(yMin, yMax, height - margin.bottom, margin.top);
+
+      // 网格
+      const grid = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      grid.setAttribute('class', 'grid');
+      const yGridCount = 5;
+      for (let i = 0; i <= yGridCount; i++) {
+        const yVal = yMin + (i * (yMax - yMin) / yGridCount);
+        const y = yScale(yVal);
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', margin.left);
+        line.setAttribute('x2', width - margin.right);
+        line.setAttribute('y1', y);
+        line.setAttribute('y2', y);
+        grid.appendChild(line);
+      }
+      svg.appendChild(grid);
+
+      // X轴
+      const xAxis = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      xAxis.setAttribute('class', 'axis');
+      const yBase = height - margin.bottom;
+      const axisPathX = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      axisPathX.setAttribute('x1', margin.left);
+      axisPathX.setAttribute('x2', width - margin.right);
+      axisPathX.setAttribute('y1', yBase);
+      axisPathX.setAttribute('y2', yBase);
+      xAxis.appendChild(axisPathX);
+      for (let i = 1; i <= xTicks; i += 1) {
+        const x = xScale(i);
+        const tick = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        tick.setAttribute('x1', x);
+        tick.setAttribute('x2', x);
+        tick.setAttribute('y1', yBase);
+        tick.setAttribute('y2', yBase + 6);
+        xAxis.appendChild(tick);
+        const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        label.setAttribute('x', x);
+        label.setAttribute('y', yBase + 16);
+        label.setAttribute('text-anchor', 'middle');
+        label.textContent = i;
+        xAxis.appendChild(label);
+      }
+      svg.appendChild(xAxis);
+
+      // Y轴
+      const yAxis = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      yAxis.setAttribute('class', 'axis');
+      const xBase = margin.left;
+      const axisPathY = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      axisPathY.setAttribute('x1', xBase);
+      axisPathY.setAttribute('x2', xBase);
+      axisPathY.setAttribute('y1', margin.top);
+      axisPathY.setAttribute('y2', height - margin.bottom);
+      yAxis.appendChild(axisPathY);
+      const yTicks = 5;
+      for (let i = 0; i <= yTicks; i++) {
+        const val = yMin + (i * (yMax - yMin) / yTicks);
+        const y = yScale(val);
+        const tick = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        tick.setAttribute('x1', xBase - 6);
+        tick.setAttribute('x2', xBase);
+        tick.setAttribute('y1', y);
+        tick.setAttribute('y2', y);
+        yAxis.appendChild(tick);
+        const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        label.setAttribute('x', xBase - 8);
+        label.setAttribute('y', y + 3);
+        label.setAttribute('text-anchor', 'end');
+        label.textContent = val.toFixed(1);
+        yAxis.appendChild(label);
+      }
+      svg.appendChild(yAxis);
+
+      return { xScale, yScale };
+    }
+
+    // 生成颜色映射（按主题索引均匀分布色相）
+    function colorScale(i, n) {
+      const h = Math.round((360 * i) / Math.max(1, n));
+      const s = 65, l = 58;
+      return `hsl(${h} ${s}% ${l}%)`;
+    }
+
+    // 根据数据生成路径字符串
+    function buildPathD(xScale, yScale, rounds, values) {
+      return rounds.map((x, i) => `${i === 0 ? 'M' : 'L'}${xScale(x)},${yScale(values[i])}`).join(' ');
+    }
+
+    async function main() {
+      const tableEl = document.getElementById('data-table');
+      const btnWrap = document.getElementById('topic-buttons');
+      const svg = document.getElementById('chart');
+      const metaEl = document.getElementById('chart-meta');
+
+      // 加载CSV（需在同目录下通过相对路径访问）
+      const resp = await fetch('./per_topic_pivot_1_30.csv');
+      const text = await resp.text();
+      const { header, rows } = parseCSV(text);
+
+      // 渲染表格
+      renderTable(tableEl, header, rows);
+
+      // 提取topic与数值
+      const topics = rows.map(r => r[0]);
+      const averageIdx = header.indexOf('average');
+      // 轮次列从第2列到average前一列（支持1..30）
+      const rounds = header.slice(1, averageIdx).map(v => parseInt(v, 10));
+      const topicToValues = new Map();
+      rows.forEach(r => {
+        const vals = r.slice(1, averageIdx).map(parseFloat);
+        topicToValues.set(r[0], vals);
+      });
+
+      // 计算Y轴范围（全局）
+      const allVals = rows.flatMap(r => r.slice(1, averageIdx).map(parseFloat)).filter(v => !Number.isNaN(v));
+      const yMin = Math.max(0, Math.min(...allVals) - 0.3);
+      const yMax = Math.max(...allVals) + 0.3;
+
+      const width = 800, height = 420;
+      const margin = { top: 20, right: 16, bottom: 36, left: 44 };
+      svg.innerHTML = '';
+      const { xScale, yScale } = drawAxes(svg, width, height, margin, rounds.length, yMin, yMax);
+
+      // 预先绘制所有主题的曲线（默认仅显示 ai），按钮用于切换可见性
+      const n = topics.length;
+      const linesGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      svg.appendChild(linesGroup);
+      const topicToPath = new Map();
+      topics.forEach((t, i) => {
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        const isDefaultVisible = (String(t).toLowerCase() === 'ai');
+        path.setAttribute('class', 'line' + (isDefaultVisible ? ' visible' : ''));
+        path.setAttribute('data-topic', t);
+        path.setAttribute('stroke', colorScale(i, n));
+        const vals = topicToValues.get(t);
+        path.setAttribute('d', buildPathD(xScale, yScale, rounds, vals));
+        linesGroup.appendChild(path);
+        topicToPath.set(t, path);
+      });
+
+      // 生成按钮：点击切换对应曲线的可见性（淡入淡出）
+      function onToggle(topic) {
+        const path = topicToPath.get(topic);
+        if (!path) return;
+        const isVisible = path.classList.contains('visible');
+        if (isVisible) path.classList.remove('visible'); else path.classList.add('visible');
+        // 更新元信息：当前可见曲线数量
+        const visibleCount = Array.from(topicToPath.values()).filter(p => p.classList.contains('visible')).length;
+        metaEl.textContent = `Selected: ${visibleCount} topics`;
+      }
+
+      // 渲染按钮（默认仅 ai 为激活态）
+      btnWrap.innerHTML = '';
+      topics.forEach(t => {
+        const btn = document.createElement('button');
+        const isActive = (String(t).toLowerCase() === 'ai');
+        btn.className = 'topic-btn' + (isActive ? ' active' : '');
+        btn.textContent = t;
+        btn.addEventListener('click', () => {
+          btn.classList.toggle('active');
+          onToggle(t);
+        });
+        btnWrap.appendChild(btn);
+      });
+      // 初始化 meta 显示（仅 ai 可见）
+      metaEl.textContent = `Selected: ${topics.includes('ai') ? 1 : 0} topics`;
+    }
+
+    main().catch(err => {
+      console.error(err);
+      alert('Failed to load per_topic_pivot_1_30.csv. If opening this file directly, please serve via a local HTTP server.');
+    });
+  </script>
+</body>
+</html>
+
+

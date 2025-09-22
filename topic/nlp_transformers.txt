@@ -1,0 +1,2 @@
+How do Transformers leverage self-attention to model long-range dependencies in text? Compare pretraining objectives (MLM, CLM, seq2seq), instruction tuning, and RLHF, and discuss scaling laws and inference efficiency.
+

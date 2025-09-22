@@ -1,0 +1,2 @@
+Algorithms provide procedures for computation. Discuss time/space complexity, data structures, approximation and randomized algorithms, and how problem reductions shape the P vs NP landscape.
+
